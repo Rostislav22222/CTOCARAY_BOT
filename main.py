@@ -2,11 +2,13 @@ import telebot
 import sqlite3 # Підключення бібліотек
 from telebot import types
 import datetime
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 
-token_bot = '6718419367:AAEPYpR16FdsGkv3fhQQR19k9-T4oaFllMI' # Токен бота та підключення до бази даних
-admin_chat_id = '873491826'
-admin_authenticated = False  # Додаємо змінну для визначення статусу аутентифікації
+
+token_bot = '6718419367:AAEPYpR16FdsGkv3fhQQR19k9-T4oaFllMI' 
+admin_login_password = "password"
+admin_authenticated = False
 
 conn = sqlite3.connect('orders.db')
 cursor = conn.cursor()
@@ -25,7 +27,7 @@ cursor.execute('''
 conn.commit()
 conn.close()
 
-conn = sqlite3.connect('orders.db') # таблиці для користувачів у базі даних:
+conn = sqlite3.connect('orders.db') 
 cursor = conn.cursor()
 
 cursor.execute('''
@@ -53,7 +55,6 @@ def create_reviews_table():
     conn.commit()
     conn.close()
 
-# Виклик функції створення таблиці при запуску програми
 create_reviews_table()
 
 
@@ -166,11 +167,11 @@ def handle_start(message):
     appointment_button = types.KeyboardButton("Запис на технічне обслуговування")
     review_button = types.KeyboardButton("Залишити відгук")
     view_reviews_button = types.KeyboardButton("Переглянути відгуки")
-    markup.row(item)
-    markup.row(cart_button)
-    markup.row(appointment_button)
-    markup.row(review_button)
-    markup.row(view_reviews_button)
+
+    # Додавання кнопок по дві в ряд
+    markup.add(item)
+    markup.add(appointment_button, review_button)
+    markup.add(view_reviews_button, cart_button)
 
     user_state[user_id] = {}
     bot.send_message(user_id, "Ласкаво просимо до магазину 'Сто СаРАЙ'!", reply_markup=markup)
@@ -203,7 +204,7 @@ def save_review(message):
     user_id = message.chat.id
     review_text = message.text
 
-    # Збереження відгуку у базу даних
+
     conn = sqlite3.connect('orders.db')
     cursor = conn.cursor()
     cursor.execute('INSERT INTO reviews (user_id, review_text) VALUES (?, ?)', (user_id, review_text))
@@ -215,12 +216,29 @@ def save_review(message):
 
 @bot.message_handler(commands=['admin_login'])
 def handle_admin_login(message):
+    if admin_authenticated:
+        bot.send_message(message.chat.id, "Ви вже увійшли в адмін-панель.")
+        return
+
+    bot.send_message(message.chat.id, "Введіть логін:")
+    bot.register_next_step_handler(message, process_login_step)
+
+def process_login_step(message):
+    if message.text == admin_login_username:
+        bot.send_message(message.chat.id, "Введіть пароль:")
+        bot.register_next_step_handler(message, process_password_step)
+    else:
+        bot.send_message(message.chat.id, "Невірний логін. Спробуйте ще раз.")
+        bot.register_next_step_handler(message, process_login_step)
+
+def process_password_step(message):
     global admin_authenticated
-    if str(message.chat.id) == admin_chat_id:
+    if message.text == admin_login_password:
         admin_authenticated = True
         bot.send_message(message.chat.id, "Ви успішно увійшли в адмін-панель.")
     else:
-        bot.send_message(message.chat.id, "Ви не маєте прав для входу в адмін-панель.")
+        bot.send_message(message.chat.id, "Невірний пароль. Спробуйте ще раз.")
+        bot.register_next_step_handler(message, process_password_step)
 
 @bot.message_handler(func=lambda message: message.text == "Головне меню")
 def handle_main_menu(message):
@@ -234,17 +252,17 @@ def handle_main_menu(message):
     markup.row(appointment_button)
     bot.send_message(user_id, "Ласкаво просимо до магазину 'Сто СаРАЙ'!", reply_markup=markup)
 
-    # Очищаємо стан користувача
+
     user_state[user_id] = {}
 
 @bot.message_handler(commands=['admin_logout'])
 def handle_admin_logout(message):
     global admin_authenticated
-    if str(message.chat.id) == admin_chat_id:
+    if admin_authenticated:
         admin_authenticated = False
         bot.send_message(message.chat.id, "Ви успішно вийшли з адмін-панелі.")
     else:
-        bot.send_message(message.chat.id, "Ви не маєте прав для виходу з адмін-панелі.")
+        bot.send_message(message.chat.id, "Ви не були в адмін-панелі.")
 
 @bot.message_handler(commands=['check_orders'])
 def handle_check_orders(message):
@@ -261,43 +279,81 @@ def handle_check_orders(message):
         conn.close()
 
         if orders:
-            order_chunks = [orders[i:i + 7] for i in range(0, len(orders), 7)]
-            for chunk in order_chunks:
-                order_text = "Список замовлень:\n"
-                for order in chunk:
-                    order_text += f"ID: {order[0]}, Авто: {order[1]}, Деталь: {order[2]}, Ціна: {order[3]} грн\n"
-                    order_text += f"Користувач: {order[4]} {order[5]}, Телефон: {order[6]}\n\n"
-                bot.send_message(message.chat.id, order_text)
-        else:
-            bot.send_message(message.chat.id, "Замовлень поки немає.")
-    else:
-        bot.send_message(message.chat.id, "Для перегляду замовлень ви повинні увійти в адмін-панель.")
-
-@bot.message_handler(commands=['view_orders'])
-def handle_view_orders(message):
-    if str(message.chat.id) == admin_chat_id:
-        conn = sqlite3.connect('orders.db')
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT o.order_id, o.car_model, o.part_name, o.price, u.name, u.surname, u.phone
-            FROM orders o
-            JOIN users u ON o.user_id = u.user_id
-        ''')
-        orders = cursor.fetchall()
-        conn.close()
-
-        if orders:
-            order_text = "Список замовлень:\n"
             for order in orders:
-                order_text += f"ID: {order[0]}, Car: {order[1]}, Part: {order[2]}, Price: {order[3]} грн\n"
-                order_text += f"   User: {order[4]} {order[5]}, Phone: {order[6]}\n"
-            bot.send_message(message.chat.id, order_text)
+                order_text = (
+                    f"🆔 <b>ID Замовлення:</b> {order[0]}\n"
+                    f"🚗 <b>Автомобіль:</b> {order[1]}\n"
+                    f"🔧 <b>Запчастина:</b> {order[2]}\n"
+                    f"💰 <b>Ціна:</b> {order[3]} грн\n"
+                    f"👤 <b>Користувач:</b> {order[4]} {order[5]}\n"
+                    f"📞 <b>Телефон:</b> {order[6]}"
+                )
+                markup = InlineKeyboardMarkup()
+                delete_button = InlineKeyboardButton(text="❌ Видалити замовлення", callback_data=f"delete_order:{order[0]}")
+                markup.add(delete_button)
+                bot.send_message(message.chat.id, order_text, parse_mode='HTML', reply_markup=markup)
         else:
             bot.send_message(message.chat.id, "Замовлень поки немає.")
     else:
         bot.send_message(message.chat.id, "Для перегляду замовлень ви повинні увійти в адмін-панель.")
 
+@bot.message_handler(commands=['view_appointments'])
+def handle_view_appointments(message):
+    user_id = message.chat.id
+    conn = sqlite3.connect('orders.db')
+    cursor = conn.cursor()
+    current_date = datetime.datetime.now().strftime('%Y-%m-%d')
 
+    cursor.execute('''
+        SELECT orders.order_id, users.name, users.surname, users.phone, orders.appointment_date, orders.appointment_time
+        FROM orders
+        JOIN users ON orders.user_id = users.user_id
+        WHERE orders.appointment_date LIKE ?
+    ''', (f'{current_date}%',))
+
+    appointments = cursor.fetchall()
+    conn.close()
+
+    if appointments:
+        for appointment in appointments:
+            appointment_text = (
+                f"🆔 <b>ID Запису:</b> {appointment[0]}\n"
+                f"👤 <b>Ім'я:</b> {appointment[1]} {appointment[2]}\n"
+                f"📞 <b>Телефон:</b> {appointment[3]}\n"
+                f"📅 <b>Дата:</b> {appointment[4]}\n"
+                f"⏰ <b>Час:</b> {appointment[5]}"
+            )
+            markup = InlineKeyboardMarkup()
+            delete_button = InlineKeyboardButton(text="❌ Видалити запис", callback_data=f"delete_appointment:{appointment[0]}")
+            markup.add(delete_button)
+            bot.send_message(user_id, appointment_text, parse_mode='HTML', reply_markup=markup)
+    else:
+        bot.send_message(user_id, "На сьогодні записів на технічне обслуговування немає.")
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('delete_appointment:'))
+def handle_delete_appointment(call):
+    order_id = call.data.split(':')[1]
+
+    conn = sqlite3.connect('orders.db')
+    cursor = conn.cursor()
+    cursor.execute('DELETE FROM orders WHERE order_id = ?', (order_id,))
+    conn.commit()
+    conn.close()
+
+    bot.answer_callback_query(call.id, text="Запис видалено.")
+    bot.delete_message(call.message.chat.id, call.message.message_id)
+@bot.callback_query_handler(func=lambda call: call.data.startswith('delete_order:'))
+def handle_delete_order(call):
+    order_id = call.data.split(':')[1]
+
+    conn = sqlite3.connect('orders.db')
+    cursor = conn.cursor()
+    cursor.execute('DELETE FROM orders WHERE order_id = ?', (order_id,))
+    conn.commit()
+    conn.close()
+
+    bot.answer_callback_query(call.id, text="Замовлення видалено.")
+    bot.delete_message(call.message.chat.id, call.message.message_id)
 @bot.message_handler(func=lambda message: message.text == "Каталог автомобілів" or message.text == "Назад") # обробник переходу до каталога
 def handle_catalog(message):
     user_id = message.chat.id
@@ -367,16 +423,8 @@ def handle_appointment_phone(message):
 def handle_appointment_date(message):
     user_id = message.chat.id
     appointment_date = message.text
-
-    # Тут ви можете використовувати додаткову логіку для перевірки доступності обраної дати
-    # Якщо дата зайнята, можете повідомити користувача та попросити обрати іншу
-
-    # Зберігаємо інформацію про обрану дату
     user_state[user_id]["appointment_date"] = appointment_date
-
-    # Просимо користувача обрати годину
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    # Додайте сюди години, які доступні для обраної дати
     available_hours = ["10:00", "12:00", "14:00", "16:00"]
     for hour in available_hours:
         item = types.KeyboardButton(hour)
@@ -392,22 +440,18 @@ def handle_appointment_start(message):
     bot.register_next_step_handler(message, handle_appointment_name)
 
 
-@bot.message_handler(func=lambda message: message.text in [part["name"] for part in catalog.get( #обробник вибора запчастин
+@bot.message_handler(func=lambda message: message.text in [part["name"] for part in catalog.get(
     user_state.get(message.chat.id, {}).get("car_model", ""), [])])
 def handle_part_selection(message):
     user_id = message.chat.id
     part_name = message.text
 
-    # Перевіряємо, чи існує ключ 'car_model' у user_state
     car_model = user_state.get(user_id, {}).get("car_model", "")
 
-    # Перевіряємо, чи існує частина в каталозі для вибраного автомобіля
     if car_model and car_model in catalog and any(part["name"] == part_name for part in catalog[car_model]):
-        # Знаходимо відповідну інформацію про запчастину
         part_info = next((part for part in catalog[car_model] if part["name"] == part_name), None)
 
         if part_info:
-            # Надсилаємо фото разом із підписом
             bot.send_photo(user_id, photo=part_info["photo_url"],
                            caption=f"{part_name}\nЦіна: {part_info['price']} грн")
         else:
@@ -421,10 +465,8 @@ def handle_appointment_time(message):
     user_id = message.chat.id
     appointment_time = message.text
 
-    # Перевірка доступності обраної години
     if not is_hour_available(user_state[user_id]["appointment_date"], appointment_time):
         bot.send_message(user_id, "Обрана година вже зайнята. Оберіть іншу годину або поверніться до вибору дати.")
-        # Просимо користувача обрати дату прийому знову
         markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
         available_dates = [datetime.date.today() + datetime.timedelta(days=i) for i in range(3)]
         for date in available_dates:
@@ -434,23 +476,17 @@ def handle_appointment_time(message):
         bot.send_message(user_id, "Оберіть дату прийому з календаря:", reply_markup=markup)
         bot.register_next_step_handler(message, handle_appointment_date)
         return
-
-    # Зберігаємо інформацію про обрану годину
     user_state[user_id]["appointment_time"] = appointment_time
 
-    # Збереження запису в базі даних
     add_appointment_to_database(user_id, user_state[user_id]["appointment_date"], appointment_time)
 
-    # Відправлення повідомлення про успішний запис
     bot.send_message(user_id, f"Ви успішно записані на технічне обслуговування.Дякую!Очікуємо за адресом Олеся Гончара 80/10 {user_state[user_id]['appointment_date']} о {appointment_time}.")
 
-    # Кнопка "Повернутися до головного меню"
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     back_to_menu_button = types.KeyboardButton("Повернутися до головного меню")
     markup.row(back_to_menu_button)
     bot.send_message(user_id, "Оберіть годину прийому:", reply_markup=markup)
 
-    # Очищення стану користувача
     user_state[user_id] = {}
 
 @bot.message_handler(func=lambda message: message.text == "Повернутися до головного меню")
@@ -459,7 +495,7 @@ def handle_back_to_menu(message):
     handle_main_menu(message)
 
 
-@bot.message_handler(func=lambda message: message.text.startswith("Купити")) #обробник команди купити
+@bot.message_handler(func=lambda message: message.text.startswith("Купити"))
 def handle_buy(message):
     user_id = message.chat.id
     item_to_buy = message.text.split("Купити ")[-1]
@@ -494,35 +530,6 @@ def handle_view_cart(message):
     else:
         bot.send_message(user_id, "Ваш кошик пустий.")
 
-
-@bot.message_handler(commands=['view_appointments'])
-def handle_view_appointments(message):
-    user_id = message.chat.id
-    conn = sqlite3.connect('orders.db')
-    cursor = conn.cursor()
-
-    # Отримуємо поточну дату
-    current_date = datetime.datetime.now().strftime('%Y-%m-%d')
-
-    # Отримуємо записи на сьогодні
-    cursor.execute('''
-        SELECT users.name, users.surname, users.phone, orders.appointment_date, orders.appointment_time
-        FROM orders
-        JOIN users ON orders.user_id = users.user_id
-        WHERE orders.appointment_date LIKE ?
-    ''', (f'{current_date}%',))
-
-    appointments = cursor.fetchall()
-    conn.close()
-
-    if appointments:
-        appointment_text = "Записи на технічне обслуговування сьогодні:\n"
-        for appointment in appointments:
-            appointment_text += f"Ім'я: {appointment[0]}, Прізвище: {appointment[1]}, Телефон: {appointment[2]}, Дата і час: {appointment[3]} {appointment[4]}\n"
-        bot.send_message(user_id, appointment_text)
-    else:
-        bot.send_message(user_id, "На сьогодні записів на технічне обслуговування немає.")
-
 @bot.message_handler(func=lambda message: message.text == "Оформити замовлення") #оформити замовлення
 def handle_checkout(message):
     user_id = message.chat.id
@@ -552,13 +559,11 @@ def is_hour_available(appointment_date, appointment_time):
     conn = sqlite3.connect('orders.db')
     cursor = conn.cursor()
 
-    # Перевіряємо, чи існують записи на обрану дату та годину
     cursor.execute('SELECT COUNT(*) FROM orders WHERE appointment_date = ? AND appointment_time = ?', (appointment_date, appointment_time))
     count = cursor.fetchone()[0]
 
     conn.close()
 
-    # Якщо записів немає, година доступна
     return count == 0
 
 def add_appointment_to_database(user_id, appointment_date, appointment_time):
@@ -577,10 +582,8 @@ def handle_checkout_phone(message):
     user_id = message.chat.id
     user_state[user_id]["phone"] = message.text
 
-    # Додаємо appointment_date до стану користувача
     user_state[user_id]["appointment_date"] = "your_appointment_date_value"
 
-    # Отримуємо інформацію про товари в кошику
     cart_contents = user_cart[user_id]
     total_price = 0
 
@@ -588,14 +591,11 @@ def handle_checkout_phone(message):
         for car_model, parts in catalog.items():
             for part_info in parts:
                 if part_info["name"] == item:
-                    # Оновлення виклику функції add_order
                     add_order(user_id, car_model, item, part_info["price"], user_state[user_id]["appointment_date"])
                     total_price += part_info["price"]
 
-    # Зберігаємо інформацію про користувача у базу даних
     add_user_info(user_id, user_state[user_id]['name'], user_state[user_id]['surname'], user_state[user_id]['phone'])
 
-    # Відправляємо повідомлення про замовлення
     order_text = f"Ваше замовлення:\n"
     for item in cart_contents:
         order_text += f"- {item}\n"
@@ -605,14 +605,12 @@ def handle_checkout_phone(message):
     order_text += f"Номер телефону: {user_state[user_id]['phone']}\n"
     bot.send_message(user_id, order_text)
 
-    # Додаємо повідомлення про очікування за адресою
     bot.send_message(user_id, "Дякуємо за ваш вибір. Очікуємо вас за адресою Олеся Гончара 80/10.")
 
     # Очищаємо кошик та стан користувача
     user_cart[user_id] = []
     user_state[user_id] = {}
 
-    # Додаємо кнопку "Повернутися до головного меню"
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     start_button = types.KeyboardButton("Головне меню")
     markup.add(start_button)
